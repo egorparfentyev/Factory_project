@@ -1,0 +1,162 @@
+// ---- Шаговый двигатель (X-ось CNC Shield) ----
+const int STEP_PIN   = 16;   // X_STEP 
+const int DIR_PIN    = 15;   // X_DIR
+const int ENABLE_PIN = 14;   // EN (LOW = включен)
+
+// Подбери направление опытно
+const bool DIR_EXTEND  = HIGH; // удлиняем позвоночник
+const bool DIR_RETRACT = LOW;  // укорачиваем
+
+// Сколько шагов делать за один "шаг" робота
+const long STEPS_PER_CRAWL = 3000;         
+const unsigned int STEP_PULSE_US = 200;     // (чем меньше, тем быстрее)
+
+// ---- DC-МОТОРЫ ----
+// первый пин = PWM (скорость), второй = направление
+
+// Верхний мотор (верхние лапы)
+const int TOP_PWM_PIN = 7;   // скорость (PWM)
+const int TOP_DIR_PIN = 6;   // направление
+
+// Нижний мотор (нижние лапы)
+const int BOT_PWM_PIN = 8;  // скорость (PWM)
+const int BOT_DIR_PIN = 10;  // направление
+
+const int TOP_SPEED_CLAMP   = 200;
+const int TOP_SPEED_UNCLAMP = 200;
+const int BOT_SPEED_CLAMP   = 200;
+const int BOT_SPEED_UNCLAMP = 200;
+
+// Время вращения для зажатия/расслабления
+const unsigned long CLAMP_TIME_MS    = 1500;
+const unsigned long UNCLAMP_TIME_MS  = 1500;
+
+// Паузы между фазами
+const unsigned long PAUSE_AFTER_CLAMP_MS = 300;
+const unsigned long PAUSE_AFTER_MOVE_MS  = 300;
+
+
+// ================= СЛУЖЕБНЫЕ ФУНКЦИИ =================
+
+// --- ШАГОВИК ---
+
+void setupStepper() {
+  pinMode(STEP_PIN, OUTPUT);
+  pinMode(DIR_PIN, OUTPUT);
+  pinMode(ENABLE_PIN, OUTPUT);
+
+  digitalWrite(ENABLE_PIN, LOW);  // включаем драйвер
+}
+
+// движение на заданное количество шагов
+void moveStepper(long steps, bool dir) {
+  digitalWrite(DIR_PIN, dir);
+  digitalWrite(ENABLE_PIN, LOW);
+
+  for (long i = 0; i < steps; i++) {
+    digitalWrite(STEP_PIN, HIGH);
+    delayMicroseconds(STEP_PULSE_US);
+    digitalWrite(STEP_PIN, LOW);
+    delayMicroseconds(STEP_PULSE_US);
+  }
+}
+
+// --- DC-МОТОРЫ С PWM ---
+
+// Верхний мотор
+void motorTopForward() {
+  digitalWrite(TOP_DIR_PIN, HIGH);                 // направление "зажать"
+  analogWrite(TOP_PWM_PIN, TOP_SPEED_CLAMP);       // скорость
+}
+
+void motorTopBackward() {
+  digitalWrite(TOP_DIR_PIN, LOW);                  // направление "расслабить"
+  analogWrite(TOP_PWM_PIN, TOP_SPEED_UNCLAMP);
+}
+
+void motorTopStop() {
+  analogWrite(TOP_PWM_PIN, 0);                     // стоп
+}
+
+// Нижний мотор
+void motorBotForward() {
+  digitalWrite(BOT_DIR_PIN, HIGH);                 // "зажать"
+  analogWrite(BOT_PWM_PIN, BOT_SPEED_CLAMP);
+}
+
+void motorBotBackward() {
+  digitalWrite(BOT_DIR_PIN, LOW);                  // "расслабить"
+  analogWrite(BOT_PWM_PIN, BOT_SPEED_UNCLAMP);
+}
+
+void motorBotStop() {
+  analogWrite(BOT_PWM_PIN, 0);
+}
+
+// --- ЗАЖАТИЕ / РАССЛАБЛЕНИЕ ЛАП ---
+
+// Верхние лапы
+void clampUpper() {
+  motorTopForward();                 // зажать
+  delay(CLAMP_TIME_MS);
+  motorTopStop();
+}
+
+void unclampUpper() {
+  motorTopBackward();                // расслабить
+  delay(UNCLAMP_TIME_MS);
+  motorTopStop();
+}
+
+// Нижние лапы
+void clampLower() {
+  motorBotForward();                 // зажать
+  delay(CLAMP_TIME_MS);
+  motorBotStop();
+}
+
+void unclampLower() {
+  motorBotBackward();                // расслабить
+  delay(UNCLAMP_TIME_MS);
+  motorBotStop();
+}
+
+
+// ================= SETUP & LOOP =================
+
+void setup() {
+  // Шаговый
+  setupStepper();
+
+  // DC-моторы
+  pinMode(TOP_PWM_PIN, OUTPUT);
+  pinMode(TOP_DIR_PIN, OUTPUT);
+  pinMode(BOT_PWM_PIN, OUTPUT);
+  pinMode(BOT_DIR_PIN, OUTPUT);
+
+  motorTopStop();
+  motorBotStop();
+
+  // Старт: обе группы лап зажаты (робот держится 8 лапами)
+  clampUpper();
+  delay(PAUSE_AFTER_CLAMP_MS);
+  clampLower();
+  delay(PAUSE_AFTER_CLAMP_MS);
+}
+
+void loop() {
+  // 1) Нижние лапы расслабляются, верхние всё ещё держат
+  unclampLower();
+  delay(PAUSE_AFTER_CLAMP_MS);
+
+  // 2) Позвоночник укорачивается (движение корпуса к верхним лапам)
+  moveStepper(STEPS_PER_CRAWL, DIR_RETRACT);
+  delay(PAUSE_AFTER_MOVE_MS);
+
+  // (логический шаг) Зафиксировать новую опору снизу
+  clampLower();
+  delay(PAUSE_AFTER_CLAMP_MS);
+
+  // 4) Верхние лапы расслабляются...
+  unclampUpper();
+  delay(PAUSE_AFTER_CLAMP_MS);
